@@ -7,6 +7,7 @@ import os.path as osp
 
 from scipy.sparse import *
 import rabbit
+import vexorder
 
 def func(x):
     '''
@@ -16,7 +17,7 @@ def func(x):
         return x
     else:
         return 1
-
+torch.manual_seed(0)
 class custom_dataset(torch.nn.Module):
     """
     data loading for more graphs
@@ -107,6 +108,7 @@ class custom_dataset(torch.nn.Module):
         # Build graph CSR.
         self.val = [1] * self.num_edges
         start = time.perf_counter()
+
         scipy_coo = coo_matrix((self.val, self.edge_index), shape=(self.num_nodes, self.num_nodes))
         scipy_csr = scipy_coo.tocsr()
         build_csr = time.perf_counter() - start
@@ -119,6 +121,8 @@ class custom_dataset(torch.nn.Module):
 
         # Get degrees array.
         degrees = (self.row_pointers[1:] - self.row_pointers[:-1]).tolist()
+
+        self.degreeTable = torch.IntTensor(degrees)
         self.degrees = torch.sqrt(torch.FloatTensor(list(map(func, degrees)))).cuda()
 
     def init_embedding(self, dim):
@@ -127,7 +131,7 @@ class custom_dataset(torch.nn.Module):
         Called from __init__.
         '''
         self.x = torch.randn(self.num_nodes, dim).cuda()
-    
+
     def init_labels(self, num_class):
         '''
         Generate the node label.
@@ -150,7 +154,7 @@ class custom_dataset(torch.nn.Module):
                 print("Reorder flag is set. Continue...")
                 print("Original edge_index\n", self.edge_index)
             start = time.perf_counter()
-            #self.edge_index = rabbit.reorder(torch.IntTensor(self.edge_index))
+            self.edge_index = rabbit.reorder(torch.IntTensor(self.edge_index))
             reorder_time = time.perf_counter() - start
 
             if self.verbose_flag:
@@ -170,14 +174,19 @@ class custom_dataset(torch.nn.Module):
             # Re-generate degrees array.
             degrees = (self.row_pointers[1:] - self.row_pointers[:-1]).tolist()
             self.degrees = torch.sqrt(torch.FloatTensor(list(map(func, degrees)))).cuda()
-
             if self.verbose_flag:
                 print("# Re-Build CSR (s): {:.3f}".format(build_csr))
+
+    def transfer(self):
+
+        self.edge_index = vexorder.reorder(self.degreeTable, torch.IntTensor(self.edge_index))
+        return
 
 
 if __name__ == '__main__':
     # path = osp.join("/home/yuke/.graphs/osdi-ae-graphs/", "cora.npz")
-    path = osp.join("/home/yuke/.graphs/osdi-ae-graphs/", "amazon0505.npz")
-    dataset = custom_dataset(path, 16, 10, load_from_txt=False)
+    path = osp.join("../osdi-ae-graphs/", "mycielskian3.npz")
+    dataset = custom_dataset(path, 4, 2, load_from_txt=False)
     dataset.reorder_flag = True
-    dataset.rabbit_reorder()
+    dataset.transfer()
+    print(dataset.edge_index)

@@ -181,6 +181,7 @@ def train():
     model.train()
     optimizer.zero_grad()
     loss = F.nll_loss(model()[:], dataset.y[:])
+    print("loss")
     loss.backward()
     optimizer.step()
 

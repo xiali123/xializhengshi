@@ -3,6 +3,7 @@ import torch
 import math
 import GNNAdvisor as GNNA
 from param import *
+import time
 
 class ScatterAndGather(torch.autograd.Function):
     '''
@@ -41,11 +42,11 @@ class GNNAFunction(torch.autograd.Function):
         # print("[Foward]: partSize: {}, dimWorker: {}, warpPerBlock: {}".format(ctx.partSize, \
         #                                                     ctx.dimWorker, ctx.warpPerBlock))
 
-        X_prime = GNNA.forward(X, weight, inputInfo.row_pointers, inputInfo.column_index, 
+        X_prime= GNNA.forward(X, weight, inputInfo.row_pointers, inputInfo.column_index,
                                 inputInfo.degrees, inputInfo.partPtr, inputInfo.part2Node, \
                                 inputInfo.partSize, inputInfo.dimWorker, inputInfo.warpPerBlock)[0]
         
-
+        #print(X.device)
         # print(X.size())
         # print(weight.size())
         # X_prime = torch.mm(X, weight)
@@ -58,12 +59,11 @@ class GNNAFunction(torch.autograd.Function):
     def backward(ctx, d_output):
         X, weight = ctx.saved_tensors
         inputInfo = ctx.inputInfo
-
+        if inputInfo.dataset_obj.x is X: print("true")
         # print("[Backward]: {}\n{}\n{}\n{}\n{}".format(inputInfo.row_pointers, inputInfo.column_index,         #                                 inputInfo.degrees, inputInfo.partPtr, inputInfo.part2Node))
 
         # print("[Backward]: partSize: {}, dimWorker: {}, warpPerBlock: {}".format(ctx.partSize, \
         #                                                     ctx.dimWorker, ctx.warpPerBlock))
-    
         d_input, d_weight = GNNA.backward(d_output, X, weight, inputInfo.row_pointers, inputInfo.column_index, 
                                         inputInfo.degrees, inputInfo.partPtr, inputInfo.part2Node,
                                         ctx.partSize, ctx.dimWorker, ctx.warpPerBlock)

@@ -273,11 +273,6 @@ torch::Tensor rabbit_reorder(
   std::cerr << "Number of edges: "    << m          << std::endl;
   auto mapping = reorder(std::move(adj));
 
-  // for(auto it = mapping.cbegin(); it != mapping.cend(); ++it)
-  // {
-  //     std::cout << it->first << " " << it->second << "\n";
-  // }
-
   // generate the edge_list.
   for(int i = 0; i < numedges; i++){
     src = std::get<0>(edges[i]);
