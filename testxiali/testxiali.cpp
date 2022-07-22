@@ -11,16 +11,80 @@
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 #define CHECK_INPUT(x) CHECK_CONTIGUOUS(x)
 
+
+typedef struct
+{
+    int id;
+    int sid;
+    int num;
+}VexNode;
+
 struct {
-    bool operator()(std::tuple<int, int, int> a, std::tuple<int, int, int> b) const
+    bool operator()(VexNode a, VexNode b) const
     {
-        int t = std::get<2>(a);
-        int k = std::get<2>(b);
+        int t = a.num;
+        int k = b.num;
         return t - k;
     }
-} customLess;
+}VexHTCmp;
 
+std::vector<torch::Tensor> reorder(
+    torch::Tensor degrees,
+    torch::Tensor in_edge_index
+)
+{
+    CHECK_INPUT(in_edge_index);
+    CHECK_INPUT(degrees);
+    const int numedges = in_edge_index.size(1);
+    const int numvexs = degrees.size(0);
+    int start = 0;
 
+    auto vex_hash_table_ptr = degrees.accessor<int, 1>();
+    auto in_edge_index_ptr = in_edge_index.accessor<int, 2>();
+    std::vector<VexNode> Vexs;
+
+    for(int i = start; i < numvexs; i++)
+    {
+        VexNode vex;
+        vex.sid = i;
+        vex.num = vex_hash_table_ptr[i];
+        Vexs.push_back(vex);
+    }
+
+    sort(Vexs.begin(), Vexs.end(), VexHTCmp);
+    std::map<int, int> vexMap;
+    std::map<int, int> vexNum;
+
+    torch::Tensor out_hash_table = torch::zeros_like(degrees);
+    torch::Tensor out_edge_index = torch::zeros_like(in_edge_index);
+
+    auto out_edge_index_ptr = out_edge_index.accessor<int, 2>();
+    auto out_hash_table_ptr = out_hash_table.accessor<int, 1>();
+
+    vexMap[Vexs[start].sid] = start;
+    Vexs[start].id = start;
+    for(int i = start + 1; i < numvexs; i++)
+    {
+        Vexs[i].id = i;
+        out_hash_table_ptr[Vexs[i].sid] = i;
+        vexMap[Vexs[i].sid] = Vexs[i-1].num + vexMap[Vexs[i-1].sid];
+        vexNum[Vexs[i].sid] = 0;
+    }
+
+    for(int i = start; i < numedges; i++)
+    {
+        int src = in_edge_index_ptr[0][i];
+        int dst = in_edge_index_ptr[1][i];
+        int tag1 = vexMap[src];
+        int tag2 = vexNum[src];
+        out_edge_index_ptr[0][tag1+tag2] = src;
+        out_edge_index_ptr[1][tag1+tag2] = dst;
+        (vexNum[src])++;
+    }
+    return {out_edge_index, out_hash_table};
+}
+
+/*
 torch::Tensor reorder(
     torch::Tensor degrees,
     torch::Tensor in_edge_index
@@ -63,7 +127,7 @@ torch::Tensor reorder(
   return out_edge_index;
 }
 
-
+*/
 // binding to python
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("reorder", &reorder, "Get the reordered node id mapping: old_id --> new_id");
