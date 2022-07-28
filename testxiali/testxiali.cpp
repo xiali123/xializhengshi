@@ -11,6 +11,9 @@
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 #define CHECK_INPUT(x) CHECK_CONTIGUOUS(x)
 
+const int K = 10000;
+const int MARK = 32;                                    //初始标记
+const int STDNNZ = 10000;                               //非零元个数阈值
 
 typedef struct
 {
@@ -28,9 +31,134 @@ struct {
     }
 }VexHTCmp;
 
+//求中位数
+int getMedium(auto input_data_ptr, auto hash_ptr, int num_edges, int num_vexs)
+{
+    int i;
+    int half_num = num_edges / 2;
+    int sum = 0;
+    for(i = 0; i < num_vexs; i++)
+    {
+        sum += input_data_ptr[hash_ptr[i]];
+        if(sum > half_num) break;
+    }
+
+    return i;
+}
+
+/*
+//求方差
+double getD(auto input_data_ptr, auto hash_ptr, int num_mean, int left, int right)
+{
+    double sum = 0;
+    for(int i = start; i < right; i++)
+    {
+        double tag = input_data_ptr[hash_ptr[i]] - num_mean;
+        sum = sum + (tag*tag);
+    }
+    return sum;
+}
+
+
+//求一次导和二次导（一次差分和二次差分用于替代作一次导和二次导）
+int getSlope(
+    auto Slope_ptr,
+    auto input_data_ptr,
+    auto hash_ptr,
+    int num_edges,
+    int num_vexs
+)
+{
+    if(num_vexs <= 0) return 0;
+    for(int i = 1; i < num_vexs; i++)
+    {
+        int fst = input_data_ptr[hash_ptr[i-1]];
+        int scd = input_data_ptr[hash_ptr[i]];
+        int dx = scd - fst;
+        Slope_ptr[0][i] = dx;
+        if(i > 1)
+        {
+            fst = Slope_ptr[0][i-1];
+            scd = Slope_ptr[0][i];
+            int dx2 = scd - fst;
+            Slope_ptr[1][i] = dx2;
+        }
+    }
+
+    return 1;
+}
+*/
+
+void partition(
+    auto marks_vct_ptr,
+    int *sums,
+    int num_vexs,
+    int mark_size
+)
+{
+    int nnz_tag = 0;
+    for(int i = 0; i < mark_size; i++)
+    {
+
+    }
+}
+
+//分流框架
+torch::Tensor AutoFrameWork(
+    torch::Tensor input_data,
+    torch::Tensor hash_table,
+    int num_edges,
+    int num_vexs,
+    int num_mean
+)
+{
+    CHECK_INPUT(input_data);
+    const int numvexs = degrees.size(0);
+    auto input_data_ptr = input_data.accessor<int, 1>();            //访问器，所以input_data必须要求是连续的
+    auto hash_table_ptr = hash_table.accessor<int, 1>();
+    torch::Tensor out_data_put = torch::zeros_like(input_data);
+
+    //(判断分区)看看是否需要分区（以及大概分几个区)
+    if(num_vexs > STDNNZ)
+    {
+        //(标定)(用于不同算法的分类问题)
+        std::vector<int> marks_vct;
+        int sums[num_vexs+1];
+        int j = MARK;
+        sums[0] = 0;
+        for(int i = 0; i < num_vexs; i++)
+        {
+            int tag = input_data_ptr[hash_table_ptr[i]];
+            sums[i+1] = sums[i] + tag;
+            if(tag == j)
+            {
+                marks_vct.hash_table(i);
+                j <<= 1;
+            }
+        }
+
+        auto marks_vct_ptr = marks_vct.accessor<int, 1>();
+        int mark_vct_size = mark_vct.size();
+        //分区
+
+
+    }
+
+
+    //(第一层分区)按线程块线程能处理的边数检查
+
+    //(第二层分区)
+
+
+    return out_data_put;
+}
+
+//排序算法
 std::vector<torch::Tensor> reorder(
     torch::Tensor degrees,
     torch::Tensor in_edge_index
+    int num_edges,
+    int num_vexs
 )
 {
     CHECK_INPUT(in_edge_index);
@@ -84,51 +212,8 @@ std::vector<torch::Tensor> reorder(
     return {out_edge_index, out_hash_table};
 }
 
-/*
-torch::Tensor reorder(
-    torch::Tensor degrees,
-    torch::Tensor in_edge_index
-) {
-  int src, dst;
-
-  using boost::adaptors::transformed;
-  std::cerr << "Number of threads: " << omp_get_max_threads() << std::endl;
-
-  CHECK_INPUT(in_edge_index);
-  CHECK_INPUT(degrees);
-
-  const int numedges = in_edge_index.size(1);
-  // const int dim0 = in_edge_index.size(1);
-  // vint is size_t
-  std::vector<std::tuple<int, int, int>> edges;
-  auto in_edge_index_ptr = in_edge_index.accessor<int, 2>();
-  auto tag_degrees_ptr = degrees.accessor<int, 1>();
-  // prepare the input
-  for(int i = 0; i < numedges; i++){
-    src = in_edge_index_ptr[0][i];
-    dst = in_edge_index_ptr[1][i];
-    edges.push_back(std::make_tuple(src, dst, tag_degrees_ptr[src]));
-  }
-
-  sort(edges.begin(), edges.end(), customLess);
-
-  torch::Tensor out_edge_index = torch::zeros_like(in_edge_index);
-  auto out_edge_index_ptr = out_edge_index.accessor<int, 2>();
-
-
-  // generate the edge_list.
-  for(int i = 0; i < numedges; i++){
-    src = std::get<0>(edges[i]);
-    dst = std::get<1>(edges[i]);
-    out_edge_index_ptr[0][i] = src;
-    out_edge_index_ptr[1][i] = dst;
-  }
-
-  return out_edge_index;
-}
-
-*/
-// binding to python
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("reorder", &reorder, "Get the reordered node id mapping: old_id --> new_id");
 }
+
+
