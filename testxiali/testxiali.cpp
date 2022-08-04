@@ -4,6 +4,7 @@
 #include <torch/extension.h>
 #include <vector>
 #include <string.h>
+#include <stdlib.h>
 #include <cstdlib>
 #include <map>
 
@@ -12,7 +13,7 @@
 #define CHECK_INPUT(x) CHECK_CONTIGUOUS(x)
 
 const int K = 10000;
-const int MARK = 32;                                    //初始标记
+const int MARK = 1;                                    //初始标记
 const int STDNNZ = 10000;                               //非零元个数阈值
 
 typedef struct
@@ -21,6 +22,19 @@ typedef struct
     int sid;
     int num;
 }VexNode;
+
+typedef struct
+{
+    int index;
+    int count;
+}ParNode;
+
+typedef struct
+{
+    int start;
+    int end;
+    int count;
+}TableNode;
 
 struct {
     bool operator()(VexNode a, VexNode b) const
@@ -46,67 +60,98 @@ int getMedium(auto input_data_ptr, auto hash_ptr, int num_edges, int num_vexs)
     return i;
 }
 
-/*
 //求方差
-double getD(auto input_data_ptr, auto hash_ptr, int num_mean, int left, int right)
-{
-    double sum = 0;
-    for(int i = start; i < right; i++)
-    {
-        double tag = input_data_ptr[hash_ptr[i]] - num_mean;
-        sum = sum + (tag*tag);
-    }
-    return sum;
-}
 
-
-//求一次导和二次导（一次差分和二次差分用于替代作一次导和二次导）
-int getSlope(
-    auto Slope_ptr,
-    auto input_data_ptr,
-    auto hash_ptr,
-    int num_edges,
-    int num_vexs
+//划分,因为有多流，所以按照窗口划分没问题
+int partition(
+    auto marks_vct_ptr,
+    int **record_ptr,
+    int *rcecord_size,
+    int mark_size,
+    int num_vexs,
+    int win_size,
+    int stdnnz
 )
 {
-    if(num_vexs <= 0) return 0;
-    for(int i = 1; i < num_vexs; i++)
+    //edgenum == 1单独处理
+    int start = 0;
+    std::vector<TableNode> tagPars;
+    TableNode tagNode;
+    int tag_num = marks_vct_ptr[0][1];
+    if(stdnnz < tag_num)
     {
-        int fst = input_data_ptr[hash_ptr[i-1]];
-        int scd = input_data_ptr[hash_ptr[i]];
-        int dx = scd - fst;
-        Slope_ptr[0][i] = dx;
-        if(i > 1)
+        tagNode.start = marks_vct_ptr[0][0];
+        tagNode.end = (mark_size == 1)? num_vexs-1:marks_vct_ptr[1][0] - 1;
+        tagNode.count = marks_vct_ptr[0][1];
+        tagPars.push_back(tagNode);
+        start = 1;
+    }
+    int end = mark_size;
+    int tag = 0;
+    for(int i = start; i < end; i++)
+    {
+        if(i % win_size == start && tag > stdnnz)
         {
-            fst = Slope_ptr[0][i-1];
-            scd = Slope_ptr[0][i];
-            int dx2 = scd - fst;
-            Slope_ptr[1][i] = dx2;
+            tagNode.end = marks_vct_ptr[i][0] - 1;
+            tagNode.count = tag;
+            tag = 0;
+            tagPars.push_back(tagNode);
+            tagNode.start = marks_vct_ptr[i][0];
+
         }
+
+        tag += marks_vct_ptr[i+j][1];
+    }
+
+    if(tag > stdnnz)
+    {
+        tagNode.end = marks_vct_ptr[i-1][0] - 1;
+        tagNode.count = tag;
+        tagPars.push_back(tagNode);
+    }
+    else
+    {
+        TableNode *tag_ptr = tagPars.back();
+        tag_ptr->count += tag;
+        tag_ptr->end = end-1;
+    }
+
+    record_ptr = (int **)malloc(sizeof(int*)*tagNode.size());
+    for(int i = 0; i < tagNode.size(); i++)
+    {
+        record_ptr[i] = (int*)malloc(sizeof(int)*4);
+        record_ptr[i].start = tagNode[i].start;
+        record_ptr[i].end = tagNode[i].end;
+        record_ptr[i].count = tagNode[i].count;
     }
 
     return 1;
 }
-*/
 
-void partition(
-    auto marks_vct_ptr,
-    int *sums,
-    int num_vexs,
-    int mark_size
+//划分记录
+int partition_table(
+    int **record_ptr,
+    int **table,
+    int win_size,
+    int stdnnz
 )
 {
-    int nnz_tag = 0;
-    for(int i = 0; i < mark_size; i++)
-    {
 
-    }
+    return 1;
+}
+
+int getWinSize(
+
+)
+{
+
 }
 
 //分流框架
 torch::Tensor AutoFrameWork(
     torch::Tensor input_data,
     torch::Tensor hash_table,
+    int *sums,
     int num_edges,
     int num_vexs,
     int num_mean
@@ -118,37 +163,40 @@ torch::Tensor AutoFrameWork(
     auto hash_table_ptr = hash_table.accessor<int, 1>();
     torch::Tensor out_data_put = torch::zeros_like(input_data);
 
-    //(判断分区)看看是否需要分区（以及大概分几个区)
-    if(num_vexs > STDNNZ)
+    //(标定并记录非零元个数)(用于不同算法的分类问题)
+    std::vector<ParNode> marks_vct;
+    int j = MARK;
+    for(int i = 0; i < num_vexs; i++)
     {
-        //(标定)(用于不同算法的分类问题)
-        std::vector<int> marks_vct;
-        int sums[num_vexs+1];
-        int j = MARK;
-        sums[0] = 0;
-        for(int i = 0; i < num_vexs; i++)
+        ParNode tagVal;
+        int tag = input_data_ptr[hash_table_ptr[i]];
+        if(tag == j)
         {
-            int tag = input_data_ptr[hash_table_ptr[i]];
-            sums[i+1] = sums[i] + tag;
-            if(tag == j)
-            {
-                marks_vct.hash_table(i);
-                j <<= 1;
-            }
+            tagVal.index = hash_table[i];
+            tagVal.count = 0;
+            ParNode *par_ptr = marks_vct.back();
+            if(par_ptr) par_ptr->count = sums[i] - sums[par_ptr->index];
+            marks_vct.push_back(tagVal);
+            j <<= 1;
         }
-
-        auto marks_vct_ptr = marks_vct.accessor<int, 1>();
-        int mark_vct_size = mark_vct.size();
-        //分区
-
-
     }
 
+    ParNode *par_ptr = marks_vct.back();
+    if(par_ptr) par_ptr->count = sums[num_vexs] - sums[par_ptr->index];
 
-    //(第一层分区)按线程块线程能处理的边数检查
+    //划分
+    int win_size = getWinSize();                               //还需要自动调整（可以自动调整更新）
+    auto marks_vct_ptr = marks_vct.accessor<int, 2>();
+    int **record_ptr;
+    int record_size;
+    partition(marks_vct_ptr, record_ptr, record_size, marks_vct.size(), num_vexs, win_size, stdnnz);
 
-    //(第二层分区)
+    for(int i = 0; i < record_size; i++)
+    {
+        setMostMin(input_data_ptr, hash_ptr, record_ptr, record_size, start, end, count);
+    }
 
+)
 
     return out_data_put;
 }
@@ -213,7 +261,7 @@ std::vector<torch::Tensor> reorder(
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("reorder", &reorder, "Get the reordered node id mapping: old_id --> new_id");
+    m.def("reorder", &reorder, "Get the reordered node id mapping: old_id --> new_id");
 }
 
 
